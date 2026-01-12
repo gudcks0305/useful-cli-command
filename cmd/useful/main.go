@@ -18,6 +18,10 @@ var commands = map[string]Command{
 		Description: "macOS 로그/캐시 파일 정리",
 		Usage:       "useful logclean [--dry-run] [--days N] [--all]",
 	},
+	"flatten": {
+		Description: "폴더 구조 평탄화 (숫자 자동 패딩)",
+		Usage:       "useful flatten [--dry-run] [--output DIR] [--pad N] <folder>",
+	},
 }
 
 type Command struct {
