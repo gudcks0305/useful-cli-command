@@ -147,7 +147,8 @@ func collectFiles(root string) ([]FileInfo, error) {
 func calculatePadding(files []FileInfo) int {
 	maxNum := 0
 	for _, f := range files {
-		matches := numberRegex.FindAllString(f.FileName, -1)
+		nameWithoutExt := strings.TrimSuffix(f.FileName, filepath.Ext(f.FileName))
+		matches := numberRegex.FindAllString(nameWithoutExt, -1)
 		for _, m := range matches {
 			if n, err := strconv.Atoi(m); err == nil && n > maxNum {
 				maxNum = n
@@ -156,9 +157,13 @@ func calculatePadding(files []FileInfo) int {
 	}
 
 	if maxNum == 0 {
-		return 0
+		return 2
 	}
-	return len(strconv.Itoa(maxNum))
+	padWidth := len(strconv.Itoa(maxNum))
+	if padWidth < 2 {
+		return 2
+	}
+	return padWidth
 }
 
 func planOperations(files []FileInfo, srcDir, destDir, sep string, padWidth int) []Operation {
@@ -190,10 +195,15 @@ func padNumbers(s string, width int) string {
 		return s
 	}
 
-	return numberRegex.ReplaceAllStringFunc(s, func(match string) string {
+	ext := filepath.Ext(s)
+	nameWithoutExt := strings.TrimSuffix(s, ext)
+
+	padded := numberRegex.ReplaceAllStringFunc(nameWithoutExt, func(match string) string {
 		n, _ := strconv.Atoi(match)
 		return fmt.Sprintf("%0*d", width, n)
 	})
+
+	return padded + ext
 }
 
 func naturalLess(a, b string) bool {
