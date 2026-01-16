@@ -22,6 +22,10 @@ var commands = map[string]Command{
 		Description: "폴더 구조 평탄화 (숫자 자동 패딩)",
 		Usage:       "useful flatten [--dry-run] [--output DIR] [--pad N] <folder>",
 	},
+	"sysclean": {
+		Description: "macOS 시스템 데이터 정리",
+		Usage:       "useful sysclean [--dry-run] [--all] [--docker]",
+	},
 }
 
 type Command struct {

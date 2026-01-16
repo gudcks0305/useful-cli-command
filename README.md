@@ -4,17 +4,34 @@ macOS 유틸리티 CLI 모음
 
 ## 설치
 
+### 전체 빌드 후 사용자 bin으로 설치
+
+```bash
+# 빌드 및 ~/bin에 설치
+mkdir -p ~/bin && \
+go build -o ~/bin/useful ./cmd/useful && \
+go build -o ~/bin/portkill ./cmd/portkill && \
+go build -o ~/bin/logclean ./cmd/logclean && \
+go build -o ~/bin/flatten ./cmd/flatten && \
+go build -o ~/bin/sysclean ./cmd/sysclean
+```
+
+> `~/bin`이 PATH에 없다면: `echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc`
+
+### go install 사용
+
 ```bash
 go install ./cmd/...
 ```
 
-또는 개별 빌드:
+### 개별 빌드
 
 ```bash
 go build -o bin/useful ./cmd/useful
 go build -o bin/portkill ./cmd/portkill
 go build -o bin/logclean ./cmd/logclean
 go build -o bin/flatten ./cmd/flatten
+go build -o bin/sysclean ./cmd/sysclean
 ```
 
 ## 명령어
@@ -35,6 +52,16 @@ macOS 로그/캐시 파일을 정리합니다.
 logclean --dry-run          # 분석만 수행
 logclean --days 30          # 30일 이상 된 파일만
 logclean --all              # sudo 필요한 경로 포함
+```
+
+### sysclean
+
+macOS 시스템 캐시/임시 파일을 정리합니다. 패턴 기반으로 앱 캐시를 포괄적으로 감지합니다.
+
+```bash
+sysclean --dry-run          # 분석만 수행
+sysclean --all              # sudo 필요한 시스템 경로 포함
+sysclean --docker           # Docker 정리 포함
 ```
 
 ### flatten
