@@ -26,6 +26,10 @@ var commands = map[string]Command{
 		Description: "macOS 시스템 데이터 정리",
 		Usage:       "useful sysclean [--dry-run] [--all] [--docker]",
 	},
+	"gitstats": {
+		Description: "Git 커밋 통계",
+		Usage:       "useful gitstats [--days N] [--hotspots] [--time]",
+	},
 }
 
 type Command struct {

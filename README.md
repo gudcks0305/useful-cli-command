@@ -13,7 +13,8 @@ go build -o ~/bin/useful ./cmd/useful && \
 go build -o ~/bin/portkill ./cmd/portkill && \
 go build -o ~/bin/logclean ./cmd/logclean && \
 go build -o ~/bin/flatten ./cmd/flatten && \
-go build -o ~/bin/sysclean ./cmd/sysclean
+go build -o ~/bin/sysclean ./cmd/sysclean && \
+go build -o ~/bin/gitstats ./cmd/gitstats
 ```
 
 > `~/bin`이 PATH에 없다면: `echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc`
@@ -32,6 +33,7 @@ go build -o bin/portkill ./cmd/portkill
 go build -o bin/logclean ./cmd/logclean
 go build -o bin/flatten ./cmd/flatten
 go build -o bin/sysclean ./cmd/sysclean
+go build -o bin/gitstats ./cmd/gitstats
 ```
 
 ## 명령어
@@ -64,6 +66,19 @@ sysclean --all              # sudo 필요한 시스템 경로 포함
 sysclean --docker           # Docker 정리 포함
 ```
 
+### gitstats
+
+Git 저장소 커밋 통계를 보여줍니다.
+
+```bash
+gitstats                    # 기본 통계
+gitstats --days 30          # 최근 30일
+gitstats --hotspots         # 자주 변경되는 파일
+gitstats --time             # 시간대/요일별 커밋 분포
+gitstats --author "홍길동"   # 특정 작성자 필터
+gitstats --top 5            # 상위 5명만
+```
+
 ### flatten
 
 폴더 구조를 평탄화합니다. 숫자는 자동으로 zero-padding되어 정렬 문제를 해결합니다.
@@ -91,4 +106,5 @@ before/                          after/
 ```bash
 useful portkill 8080
 useful logclean --dry-run
+useful gitstats --hotspots --time
 ```
