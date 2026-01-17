@@ -30,6 +30,10 @@ var commands = map[string]Command{
 		Description: "Git 커밋 통계",
 		Usage:       "useful gitstats [--days N] [--hotspots] [--time]",
 	},
+	"depclean": {
+		Description: "오래된 프로젝트 의존성 정리 (node_modules, vendor 등)",
+		Usage:       "useful depclean [--dry-run] [--days N] [--path DIR] [--min-size SIZE]",
+	},
 }
 
 type Command struct {
