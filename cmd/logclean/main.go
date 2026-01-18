@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/useful-go/pkg/common"
+	"github.com/useful-go/pkg/fs"
+	"github.com/useful-go/pkg/ui"
 )
 
 var cleanTargets = []CleanTarget{
@@ -67,12 +68,8 @@ func main() {
 		return
 	}
 
-	fmt.Print("\n정리를 진행하시겠습니까? (y/N): ")
-	var answer string
-	fmt.Scanln(&answer)
-
-	if strings.ToLower(answer) != "y" {
-		common.Info("취소되었습니다")
+	confirm := ui.YesNoConfirmation("\n정리를 진행하시겠습니까?")
+	if !confirm.MustConfirm() {
 		return
 	}
 
@@ -85,15 +82,7 @@ func main() {
 		totalDeleted += deleted
 	}
 
-	common.Success("총 %s 정리 완료", formatSize(totalDeleted))
-}
-
-func expandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
-	}
-	return path
+	common.Success("총 %s 정리 완료", fs.FormatSize(totalDeleted))
 }
 
 func analyzeTarget(target CleanTarget, cutoff time.Time) CleanResult {
@@ -148,7 +137,7 @@ func cleanTarget(target CleanTarget, cutoff time.Time) int64 {
 	})
 
 	if deleted > 0 {
-		common.Success("%s: %s 삭제됨", target.Description, formatSize(deleted))
+		common.Success("%s: %s 삭제됨", target.Description, fs.FormatSize(deleted))
 	}
 	return deleted
 }
@@ -169,30 +158,15 @@ func printSummary(results []CleanResult) {
 			fmt.Printf("  %-20s: 정리 대상 없음\n", r.Target.Description)
 			continue
 		}
-		fmt.Printf("  %-20s: %d개 파일, %s\n", r.Target.Description, r.FilesCount, formatSize(r.TotalSize))
+		fmt.Printf("  %-20s: %d개 파일, %s\n", r.Target.Description, r.FilesCount, fs.FormatSize(r.TotalSize))
 		totalFiles += r.FilesCount
 		totalSize += r.TotalSize
 	}
 
 	fmt.Println()
-	common.Info("총 %d개 파일, %s 정리 가능", totalFiles, formatSize(totalSize))
+	common.Info("총 %d개 파일, %s 정리 가능", totalFiles, fs.FormatSize(totalSize))
 }
 
-func formatSize(bytes int64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
+func expandPath(path string) string {
+	return fs.ExpandPath(path)
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +9,9 @@ import (
 	"strings"
 
 	"github.com/useful-go/pkg/common"
+	"github.com/useful-go/pkg/fs"
+	"github.com/useful-go/pkg/text"
+	"github.com/useful-go/pkg/ui"
 )
 
 // CleanTarget represents a cleanup target
@@ -77,19 +79,19 @@ func main() {
 	results := analyzeTargets(targets)
 
 	fmt.Println("정리 대상:")
-	fmt.Println(strings.Repeat("-", 70))
+	fmt.Println(text.Separator(70))
 	fmt.Printf("%-30s %-15s %s\n", "대상", "크기", "설명")
-	fmt.Println(strings.Repeat("-", 70))
+	fmt.Println(text.Separator(70))
 
 	for _, r := range results {
 		if r.Size > 0 {
-			fmt.Printf("%-30s %-15s %s\n", r.Target.Name, formatSize(r.Size), r.Target.Description)
+			fmt.Printf("%-30s %-15s %s\n", r.Target.Name, fs.FormatSize(r.Size), r.Target.Description)
 			totalSize += r.Size
 		}
 	}
 
-	fmt.Println(strings.Repeat("-", 70))
-	fmt.Printf("%-30s %-15s\n", "총계", formatSize(totalSize))
+	fmt.Println(text.Separator(70))
+	fmt.Printf("%-30s %-15s\n", "총계", fs.FormatSize(totalSize))
 	fmt.Println()
 
 	if totalSize == 0 {
@@ -102,13 +104,8 @@ func main() {
 		return
 	}
 
-	fmt.Print("위 항목들을 정리하시겠습니까? (y/N): ")
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-
-	if answer != "y" && answer != "yes" {
-		common.Info("취소되었습니다")
+	confirm := ui.YesNoConfirmation("위 항목들을 정리하시겠습니까?")
+	if !confirm.MustConfirm() {
 		return
 	}
 
@@ -129,19 +126,16 @@ func analyzeTargets(targets []CleanTarget) []AnalysisResult {
 		result := AnalysisResult{Target: target}
 
 		if target.Name == "Docker Images" {
-			size, err := getDockerSize()
+			size := getDockerSize()
 			result.Size = size
-			result.Error = err
 		} else if target.Pattern != "" {
 			// 패턴 기반 분석
-			size, err := getPatternSize(expandPath(target.Path), target.Pattern)
+			size := getPatternSize(expandPath(target.Path), target.Pattern)
 			result.Size = size
-			result.Error = err
 		} else {
 			path := expandPath(target.Path)
-			size, err := getDirSize(path)
+			size := getDirSize(path)
 			result.Size = size
-			result.Error = err
 		}
 
 		results = append(results, result)
@@ -174,7 +168,7 @@ func cleanTargets(results []AnalysisResult, useSudo bool) {
 		if err != nil {
 			common.Error("%s 정리 실패: %v", r.Target.Name, err)
 		} else {
-			common.Success("%s 정리 완료 (%s)", r.Target.Name, formatSize(r.Size))
+			common.Success("%s 정리 완료 (%s)", r.Target.Name, fs.FormatSize(r.Size))
 		}
 	}
 }
@@ -187,60 +181,45 @@ func expandPath(path string) string {
 	return path
 }
 
-func getDirSize(path string) (int64, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return 0, nil
-	}
-
-	var size int64
-	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-
-	return size, err
+func getDirSize(path string) int64 {
+	return fs.GetDirSize(path)
 }
 
 // getPatternSize 패턴에 매칭되는 디렉토리들의 총 크기 계산
-func getPatternSize(basePath, pattern string) (int64, error) {
+func getPatternSize(basePath, pattern string) int64 {
 	if _, err := os.Stat(basePath); os.IsNotExist(err) {
-		return 0, nil
+		return 0
 	}
 
 	var totalSize int64
 	matches, err := filepath.Glob(filepath.Join(basePath, pattern))
 	if err != nil {
-		return 0, err
+		return 0
 	}
 
 	for _, match := range matches {
-		size, _ := getDirSize(match)
+		size := fs.GetDirSize(match)
 		totalSize += size
 	}
 
-	return totalSize, nil
+	return totalSize
 }
 
-func getDockerSize() (int64, error) {
+func getDockerSize() int64 {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return 0, nil
+		return 0
 	}
 
 	cmd := exec.Command("docker", "system", "df", "--format", "{{.Size}}")
 	output, err := cmd.Output()
 	if err != nil {
-		return 0, nil
+		return 0
 	}
 
 	if len(strings.TrimSpace(string(output))) > 0 {
-		return 1, nil
+		return 1
 	}
-	return 0, nil
+	return 0
 }
 
 func cleanDocker() {
@@ -303,23 +282,5 @@ func cleanPattern(basePath, pattern string, useSudo bool) error {
 }
 
 func formatSize(bytes int64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
-	default:
-		if bytes == 1 {
-			return "확인 필요"
-		}
-		return fmt.Sprintf("%d B", bytes)
-	}
+	return fs.FormatSize(bytes)
 }

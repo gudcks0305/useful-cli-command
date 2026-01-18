@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +9,9 @@ import (
 	"time"
 
 	"github.com/useful-go/pkg/common"
+	"github.com/useful-go/pkg/fs"
+	"github.com/useful-go/pkg/text"
+	"github.com/useful-go/pkg/ui"
 )
 
 // DependencyType represents a type of dependency folder
@@ -100,21 +102,24 @@ func main() {
 	minSize := flag.String("min-size", "0", "최소 크기 필터 (예: 100MB, 1GB)")
 	flag.Parse()
 
+	// Home directory for path truncation
+	home, _ := os.UserHomeDir()
+
 	// 경로 처리
-	searchPath := expandPath(*scanPath)
+	searchPath := fs.ExpandPath(*scanPath)
 	if !filepath.IsAbs(searchPath) {
 		cwd, _ := os.Getwd()
 		searchPath = filepath.Join(cwd, searchPath)
 	}
 
-	minSizeBytes := parseSize(*minSize)
+	minSizeBytes := text.ParseSize(*minSize)
 
 	common.Header("depclean - 오래된 프로젝트 의존성 정리")
 	fmt.Println()
 	common.Info("검색 경로: %s", searchPath)
 	common.Info("기준: %d일 이상 미접근", *days)
 	if minSizeBytes > 0 {
-		common.Info("최소 크기: %s", formatSize(minSizeBytes))
+		common.Info("최소 크기: %s", fs.FormatSize(minSizeBytes))
 	}
 	fmt.Println()
 
@@ -134,19 +139,19 @@ func main() {
 	// 결과 출력
 	var totalSize int64
 	fmt.Println("발견된 오래된 의존성:")
-	fmt.Println(strings.Repeat("-", 90))
+	fmt.Println(text.Separator(90))
 	fmt.Printf("%-40s %-12s %-10s %s\n", "프로젝트", "타입", "크기", "미접근")
-	fmt.Println(strings.Repeat("-", 90))
+	fmt.Println(text.Separator(90))
 
 	for _, dep := range found {
-		projectName := truncatePath(dep.ProjectPath, 38)
+		projectName := text.TruncatePath(dep.ProjectPath, 38, home)
 		fmt.Printf("%-40s %-12s %-10s %d일\n",
-			projectName, dep.DepType, formatSize(dep.Size), dep.DaysSince)
+			projectName, dep.DepType, fs.FormatSize(dep.Size), dep.DaysSince)
 		totalSize += dep.Size
 	}
 
-	fmt.Println(strings.Repeat("-", 90))
-	fmt.Printf("%-40s %-12s %-10s\n", fmt.Sprintf("총 %d개", len(found)), "", formatSize(totalSize))
+	fmt.Println(text.Separator(90))
+	fmt.Printf("%-40s %-12s %-10s\n", fmt.Sprintf("총 %d개", len(found)), "", fs.FormatSize(totalSize))
 	fmt.Println()
 
 	if *dryRun {
@@ -155,13 +160,8 @@ func main() {
 	}
 
 	// 확인
-	fmt.Print("위 항목들을 삭제하시겠습니까? (y/N): ")
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-
-	if answer != "y" && answer != "yes" {
-		common.Info("취소되었습니다")
+	confirm := ui.YesNoConfirmation("위 항목들을 삭제하시겠습니까?")
+	if !confirm.MustConfirm() {
 		return
 	}
 
@@ -177,12 +177,12 @@ func main() {
 		} else {
 			deletedCount++
 			deletedSize += dep.Size
-			common.Success("삭제: %s (%s)", truncatePath(dep.DepPath, 50), formatSize(dep.Size))
+			common.Success("삭제: %s (%s)", text.TruncatePath(dep.DepPath, 50, home), fs.FormatSize(dep.Size))
 		}
 	}
 
 	fmt.Println()
-	common.Success("완료: %d개 삭제, %s 확보", deletedCount, formatSize(deletedSize))
+	common.Success("완료: %d개 삭제, %s 확보", deletedCount, fs.FormatSize(deletedSize))
 }
 
 func scanDependencies(root string, maxDepth, days int, minSize int64) []FoundDependency {
@@ -255,7 +255,7 @@ func scanDependencies(root string, maxDepth, days int, minSize int64) []FoundDep
 					}
 
 					// 크기 계산
-					size := getDirSize(path)
+					size := fs.GetDirSize(path)
 					if size < minSize {
 						return filepath.SkipDir
 					}
@@ -308,79 +308,4 @@ func getLastAccessTime(path string) time.Time {
 	})
 
 	return modTime
-}
-
-func getDirSize(path string) int64 {
-	var size int64
-	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-	return size
-}
-
-func expandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
-	}
-	return path
-}
-
-func truncatePath(path string, maxLen int) string {
-	home, _ := os.UserHomeDir()
-	if strings.HasPrefix(path, home) {
-		path = "~" + path[len(home):]
-	}
-	if len(path) <= maxLen {
-		return path
-	}
-	return "..." + path[len(path)-maxLen+3:]
-}
-
-func parseSize(s string) int64 {
-	s = strings.ToUpper(strings.TrimSpace(s))
-	if s == "0" || s == "" {
-		return 0
-	}
-
-	multiplier := int64(1)
-	if strings.HasSuffix(s, "GB") {
-		multiplier = 1024 * 1024 * 1024
-		s = strings.TrimSuffix(s, "GB")
-	} else if strings.HasSuffix(s, "MB") {
-		multiplier = 1024 * 1024
-		s = strings.TrimSuffix(s, "MB")
-	} else if strings.HasSuffix(s, "KB") {
-		multiplier = 1024
-		s = strings.TrimSuffix(s, "KB")
-	}
-
-	var value float64
-	fmt.Sscanf(strings.TrimSpace(s), "%f", &value)
-	return int64(value * float64(multiplier))
-}
-
-func formatSize(bytes int64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
 }

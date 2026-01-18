@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/useful-go/pkg/common"
+	"github.com/useful-go/pkg/text"
+	"github.com/useful-go/pkg/ui"
 )
 
 var numberRegex = regexp.MustCompile(`(\d+)`)
@@ -78,11 +80,8 @@ func main() {
 		return
 	}
 
-	fmt.Print("\n진행하시겠습니까? (y/N): ")
-	var answer string
-	fmt.Scanln(&answer)
-	if strings.ToLower(answer) != "y" {
-		common.Info("취소되었습니다")
+	confirm := ui.YesNoConfirmation("\n진행하시겠습니까?")
+	if !confirm.MustConfirm() {
 		return
 	}
 
@@ -207,42 +206,7 @@ func padNumbers(s string, width int) string {
 }
 
 func naturalLess(a, b string) bool {
-	partsA := splitByNumbers(a)
-	partsB := splitByNumbers(b)
-
-	for i := 0; i < len(partsA) && i < len(partsB); i++ {
-		if partsA[i] != partsB[i] {
-			numA, errA := strconv.Atoi(partsA[i])
-			numB, errB := strconv.Atoi(partsB[i])
-
-			if errA == nil && errB == nil {
-				return numA < numB
-			}
-			return partsA[i] < partsB[i]
-		}
-	}
-	return len(partsA) < len(partsB)
-}
-
-func splitByNumbers(s string) []string {
-	var parts []string
-	var current strings.Builder
-	var inNumber bool
-
-	for _, r := range s {
-		isDigit := r >= '0' && r <= '9'
-		if current.Len() > 0 && isDigit != inNumber {
-			parts = append(parts, current.String())
-			current.Reset()
-		}
-		current.WriteRune(r)
-		inNumber = isDigit
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-	return parts
+	return text.NaturalLess(a, b)
 }
 
 func copyFile(src, dst string) error {

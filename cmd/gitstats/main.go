@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/useful-go/pkg/common"
+	"github.com/useful-go/pkg/text"
 )
 
 type AuthorStats struct {
@@ -125,19 +126,19 @@ func printAuthorStats(days int, filterAuthor string, top int) {
 		title = fmt.Sprintf("기여자 통계 (최근 %d일)", days)
 	}
 	fmt.Println(title)
-	fmt.Println(strings.Repeat("-", 70))
+	fmt.Println(text.Separator(70))
 	fmt.Printf("%-25s %8s %12s %12s\n", "작성자", "커밋", "추가(+)", "삭제(-)")
-	fmt.Println(strings.Repeat("-", 70))
+	fmt.Println(text.Separator(70))
 
 	var totalCommits, totalAdd, totalDel int
 	for _, s := range stats {
-		fmt.Printf("%-25s %8d %12d %12d\n", truncate(s.Name, 25), s.Commits, s.Additions, s.Deletions)
+		fmt.Printf("%-25s %8d %12d %12d\n", text.Truncate(s.Name, 25), s.Commits, s.Additions, s.Deletions)
 		totalCommits += s.Commits
 		totalAdd += s.Additions
 		totalDel += s.Deletions
 	}
 
-	fmt.Println(strings.Repeat("-", 70))
+	fmt.Println(text.Separator(70))
 	fmt.Printf("%-25s %8d %12d %12d\n", "합계", totalCommits, totalAdd, totalDel)
 }
 
@@ -230,11 +231,11 @@ func printHotspots(days int, top int) {
 		title = fmt.Sprintf("🔥 핫스팟 - 최근 %d일", days)
 	}
 	fmt.Println(title)
-	fmt.Println(strings.Repeat("-", 50))
+	fmt.Println(text.Separator(50))
 
 	for i, f := range files {
 		bar := strings.Repeat("█", min(f.Count, 20))
-		fmt.Printf("%2d. %-30s %3d %s\n", i+1, truncate(f.Name, 30), f.Count, bar)
+		fmt.Printf("%2d. %-30s %3d %s\n", i+1, text.Truncate(f.Name, 30), f.Count, bar)
 	}
 }
 
@@ -269,7 +270,7 @@ func printTimeStats(days int) {
 	}
 
 	fmt.Println("⏰ 시간대별 커밋")
-	fmt.Println(strings.Repeat("-", 50))
+	fmt.Println(text.Separator(50))
 
 	maxHour := 1
 	for _, c := range hours {
@@ -286,7 +287,7 @@ func printTimeStats(days int) {
 
 	fmt.Println()
 	fmt.Println("📅 요일별 커밋")
-	fmt.Println(strings.Repeat("-", 50))
+	fmt.Println(text.Separator(50))
 
 	dayNames := []string{"일", "월", "화", "수", "목", "금", "토"}
 	maxDay := 1
@@ -303,16 +304,6 @@ func printTimeStats(days int) {
 	}
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
-
 func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return text.Min(a, b)
 }
