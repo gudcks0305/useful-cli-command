@@ -10,6 +10,10 @@ import (
 )
 
 var commands = map[string]Command{
+	"lsport": {
+		Description: "사용 중인 포트 목록 조회",
+		Usage:       "useful lsport [--tcp] [--udp] [--listen] [--port N]",
+	},
 	"portkill": {
 		Description: "포트를 사용하는 프로세스 종료",
 		Usage:       "useful portkill <port>",
