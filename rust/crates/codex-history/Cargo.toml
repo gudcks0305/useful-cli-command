@@ -1,0 +1,20 @@
+[package]
+name = "codex-history"
+version = "0.1.0"
+description = "Summarize local Codex history metadata without exposing prompts"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "codex-history"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

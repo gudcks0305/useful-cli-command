@@ -2,6 +2,16 @@
 
 macOS 유틸리티 CLI 모음
 
+Go 유틸리티와 Rust 기반 읽기 전용 진단 도구를 함께 제공합니다.
+
+## Rust 도구
+
+- `repo-snapshot`: Git 상태, manifest, 제한된 파일 트리 수집
+- `macdiag-json`: 개인정보를 제외한 macOS 진단 JSON 생성
+- `codex-history`: prompt 원문 없는 로컬 Codex 작업 이력 요약
+
+빌드, 설치, 사용법은 [`rust/README.md`](rust/README.md)를 참고하세요.
+
 ## 설치
 
 ### 전체 빌드 후 사용자 bin으로 설치
