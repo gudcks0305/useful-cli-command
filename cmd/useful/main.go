@@ -27,8 +27,8 @@ var commands = map[string]Command{
 		Usage:       "useful flatten [--dry-run] [--output DIR] [--pad N] <folder>",
 	},
 	"sysclean": {
-		Description: "macOS 시스템 데이터 정리",
-		Usage:       "useful sysclean [--dry-run] [--all] [--docker]",
+		Description: "macOS 개발 캐시와 프로젝트 산출물 선택 정리",
+		Usage:       "useful sysclean [--dry-run] [--select] [--projects PATH] [--all] [--docker]",
 	},
 	"gitstats": {
 		Description: "Git 커밋 통계",

@@ -68,13 +68,23 @@ logclean --all              # sudo 필요한 경로 포함
 
 ### sysclean
 
-macOS 시스템 캐시/임시 파일을 정리합니다. 패턴 기반으로 앱 캐시를 포괄적으로 감지합니다.
+macOS 개발 캐시와 오래된 프로젝트 빌드 산출물을 병렬 분석하고 선택 정리합니다. 시스템 전체 경로 대신 재생성 가능한 고정 allowlist만 기본 대상으로 사용합니다.
 
 ```bash
-sysclean --dry-run          # 분석만 수행
-sysclean --all              # sudo 필요한 시스템 경로 포함
-sysclean --docker           # Docker 정리 포함
+sysclean --dry-run                       # 안전 기본 캐시 병렬 분석
+sysclean --select                        # 분석 후 번호로 항목 선택
+sysclean --all --dry-run                 # 재다운로드 비용 있는 optional 캐시 포함
+sysclean --docker --dry-run              # Docker unused data 포함 (volume 제외)
+sysclean --only npm-cache,uv-cache       # 지정한 ID만 정리
+sysclean --list                          # 지원 ID와 활성화 조건 확인
+sysclean --workers 8                     # 병렬 작업자 수 직접 지정 (0: 자동)
+sysclean --projects ~/project --dry-run  # 30일 이상 미수정 프로젝트 산출물 탐색
+sysclean --projects ~/project --project-days 60 --select
 ```
+
+프로젝트 탐색은 명시한 루트에서만 동작합니다. `.venv`, `venv`, `node_modules`, `.next`, `.nuxt`, `.turbo`, Rust/Maven `target`, SwiftPM `.build`, Gradle, CocoaPods, .NET 산출물을 marker 파일로 검증합니다. 프로젝트 산출물이 발견되면 실제 삭제 전에 개별 번호 선택을 강제합니다. Git에 추적될 수 있는 `vendor`와 비밀 설정에 흔히 쓰이는 `.env`는 제외합니다.
+
+`Xcode Archives`, `/Library/Caches`, `/var/log`, `/private/var/folders`, 앱 데이터 전체, Docker volume은 자동 정리 대상이 아닙니다.
 
 ### gitstats
 
