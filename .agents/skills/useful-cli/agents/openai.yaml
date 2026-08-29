@@ -1,0 +1,3 @@
+interface:
+  display_name: "Useful CLI"
+  short_description: "Use the local CLI suite safely and correctly"
