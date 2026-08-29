@@ -17,8 +17,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - run: test -z "$(gofmt -l ./cmd ./internal ./pkg)"
       - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
       - run: go build ./...
+      - name: Validate agent skill installer
+        run: |
+          sh -n scripts/install-skill.sh
+          export AGENTS_SKILLS_DIR="$RUNNER_TEMP/agents-skills"
+          export CLAUDE_SKILLS_DIR="$RUNNER_TEMP/claude-skills"
+          sh scripts/install-skill.sh
+          sh scripts/install-skill.sh
+          test -s "$AGENTS_SKILLS_DIR/useful-cli/SKILL.md"
+          test "$CLAUDE_SKILLS_DIR/useful-cli" -ef "$AGENTS_SKILLS_DIR/useful-cli"
 
   rust:
     runs-on: macos-latest

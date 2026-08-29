@@ -1,2 +1,22 @@
 bin/
 target/
+dist/
+.DS_Store
+
+# Root-level build outputs
+/useful
+/bintrace
+/dedupe
+/depclean
+/flatten
+/gitdoctor
+/gitstats
+/hashmanifest
+/launchaudit
+/logclean
+/lsport
+/netcheck
+/pathdoctor
+/portkill
+/symaudit
+/sysclean
