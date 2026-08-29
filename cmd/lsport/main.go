@@ -1,254 +1,193 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"os/exec"
-	"regexp"
-	"sort"
+	"io"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
-	"github.com/useful-go/pkg/common"
+	"github.com/useful-go/internal/ports"
 )
 
-type PortInfo struct {
-	Port     int
-	Protocol string
-	PID      string
-	Command  string
-	User     string
-	State    string
-	CPU      string
-	Mem      string
+type optionalInt struct {
+	value int
+	set   bool
+}
+
+func (v *optionalInt) String() string { return strconv.Itoa(v.value) }
+func (v *optionalInt) Set(raw string) error {
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return err
+	}
+	v.value, v.set = value, true
+	return nil
+}
+
+type app struct {
+	snapshot ports.SnapshotFunc
+	tty      bool
 }
 
 func main() {
-	tcpOnly := flag.Bool("tcp", false, "TCP 포트만 표시")
-	udpOnly := flag.Bool("udp", false, "UDP 포트만 표시")
-	listen := flag.Bool("listen", false, "LISTEN 상태만 표시")
-	portFilter := flag.Int("port", 0, "특정 포트만 표시")
-	help := flag.Bool("help", false, "도움말")
-	flag.BoolVar(help, "h", false, "도움말")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	info, err := os.Stdout.Stat()
+	tty := err == nil && info.Mode()&os.ModeCharDevice != 0
+	snapshotter := ports.NewSnapshotter()
+	code := app{snapshot: snapshotter.Snapshot, tty: tty}.run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	os.Exit(code)
+}
 
-	flag.Parse()
+func (a app) run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("lsport", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	tcp := flags.Bool("tcp", false, "TCP 포트만 표시")
+	udp := flags.Bool("udp", false, "UDP 포트만 표시")
+	listen := flags.Bool("listen", false, "LISTEN 상태만 표시")
+	watch := flags.Bool("watch", false, "포트 변화를 감시")
+	interval := flags.Duration("interval", 2*time.Second, "감시 간격")
+	help := flags.Bool("help", false, "도움말")
+	flags.BoolVar(help, "h", false, "도움말")
+	var portValue, countValue optionalInt
+	flags.Var(&portValue, "port", "특정 포트만 표시")
+	flags.Var(&countValue, "count", "watch 스냅샷 횟수")
+	flags.Usage = func() { printUsage(stderr) }
 
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
 	if *help {
-		printUsage()
-		return
+		printUsage(stdout)
+		return 0
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "오류: 예상하지 않은 인자: %s\n", strings.Join(flags.Args(), " "))
+		return 2
+	}
+	if *tcp && *udp {
+		fmt.Fprintln(stderr, "오류: --tcp와 --udp를 함께 사용할 수 없습니다")
+		return 2
+	}
+	if portValue.set && (portValue.value < 1 || portValue.value > 65535) {
+		fmt.Fprintln(stderr, "오류: --port는 1..65535 범위여야 합니다")
+		return 2
+	}
+	if *interval <= 0 {
+		fmt.Fprintln(stderr, "오류: --interval은 양수여야 합니다")
+		return 2
+	}
+	if countValue.set && countValue.value <= 0 {
+		fmt.Fprintln(stderr, "오류: --count는 양수여야 합니다")
+		return 2
+	}
+	if !*watch && countValue.set {
+		fmt.Fprintln(stderr, "오류: --count는 --watch와 함께 사용해야 합니다")
+		return 2
+	}
+	if *watch && !a.tty && !countValue.set {
+		fmt.Fprintln(stderr, "오류: 비-TTY 환경의 --watch는 양수 --count가 필요합니다")
+		return 2
+	}
+	if a.snapshot == nil {
+		fmt.Fprintln(stderr, "오류: 포트 조회기가 설정되지 않았습니다")
+		return 1
 	}
 
-	ports := getPortList(*tcpOnly, *udpOnly, *listen, *portFilter)
-	if len(ports) == 0 {
-		common.Warning("사용 중인 포트가 없습니다")
-		return
-	}
-
-	printPortTable(ports)
-}
-
-func printUsage() {
-	common.Header("ls-port - 사용 중인 포트 목록 조회")
-	fmt.Println()
-	fmt.Println("사용법: lsport [options]")
-	fmt.Println()
-	fmt.Println("옵션:")
-	fmt.Println("  --tcp          TCP 포트만 표시")
-	fmt.Println("  --udp          UDP 포트만 표시")
-	fmt.Println("  --listen       LISTEN 상태만 표시")
-	fmt.Println("  --port N       특정 포트만 표시")
-	fmt.Println("  -h, --help     도움말")
-	fmt.Println()
-	fmt.Println("예시:")
-	fmt.Println("  lsport              # 모든 포트 표시")
-	fmt.Println("  lsport --tcp        # TCP만 표시")
-	fmt.Println("  lsport --listen     # 리스닝 포트만 표시")
-	fmt.Println("  lsport --port 3000  # 3000번 포트만 표시")
-}
-
-func getPortList(tcpOnly, udpOnly, listenOnly bool, portFilter int) []PortInfo {
-	// lsof -i -P -n: 네트워크 연결 정보, 포트 숫자로 표시, DNS 해석 안함
-	cmd := exec.Command("lsof", "-i", "-P", "-n")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-
-	var ports []PortInfo
-	seen := make(map[string]bool)
-	lines := strings.Split(string(output), "\n")
-
-	// 포트 추출 정규식
-	portRegex := regexp.MustCompile(`:(\d+)(?:\s|$|->)`)
-
-	for i, line := range lines {
-		if i == 0 || strings.TrimSpace(line) == "" {
-			continue // 헤더 스킵
-		}
-
-		fields := strings.Fields(line)
-		if len(fields) < 9 {
-			continue
-		}
-
-		command := fields[0]
-		pid := fields[1]
-		user := fields[2]
-		protocol := strings.ToUpper(fields[7]) // TCP, UDP
-		name := fields[8]                       // 연결 정보
-
-		// 프로토콜 필터
-		if tcpOnly && !strings.HasPrefix(protocol, "TCP") {
-			continue
-		}
-		if udpOnly && !strings.HasPrefix(protocol, "UDP") {
-			continue
-		}
-
-		// 상태 확인
-		state := ""
-		if len(fields) >= 10 {
-			state = fields[9]
-			// 괄호 제거: (LISTEN) -> LISTEN
-			state = strings.Trim(state, "()")
-		}
-
-		if listenOnly && state != "LISTEN" {
-			continue
-		}
-
-		// 로컬 포트 추출
-		matches := portRegex.FindStringSubmatch(name)
-		if len(matches) < 2 {
-			continue
-		}
-
-		port, err := strconv.Atoi(matches[1])
+	filter := ports.Filter{TCP: *tcp, UDP: *udp, Listen: *listen, Port: portValue.value}
+	snapshot := func(ctx context.Context) ([]ports.Port, error) {
+		current, err := a.snapshot(ctx)
 		if err != nil {
-			continue
+			return nil, err
 		}
-
-		// 포트 필터
-		if portFilter > 0 && port != portFilter {
-			continue
+		return ports.ApplyFilter(current, filter), nil
+	}
+	if !*watch {
+		current, err := snapshot(ctx)
+		if err != nil {
+			return printRuntimeError(stderr, err)
 		}
-
-		// 중복 제거 (같은 포트/프로토콜/프로세스)
-		key := fmt.Sprintf("%d-%s-%s", port, protocol, pid)
-		if seen[key] {
-			continue
+		if len(current) == 0 {
+			fmt.Fprintln(stdout, "사용 중인 포트가 없습니다")
+			return 0
 		}
-		seen[key] = true
-
-		// CPU, 메모리 사용량 조회
-		cpu, mem := getProcessStats(pid)
-
-		ports = append(ports, PortInfo{
-			Port:     port,
-			Protocol: protocol,
-			PID:      pid,
-			Command:  truncate(command, 20),
-			User:     user,
-			State:    state,
-			CPU:      cpu,
-			Mem:      mem,
-		})
+		printTable(stdout, current)
+		return 0
 	}
 
-	// 포트 번호로 정렬
-	sort.Slice(ports, func(i, j int) bool {
-		return ports[i].Port < ports[j].Port
+	err := ports.Watch(ctx, *interval, countValue.value, snapshot, func(change ports.Change) error {
+		if change.Initial {
+			fmt.Fprintf(stdout, "초기 스냅샷: %d개 포트\n", len(change.Current))
+			printTable(stdout, change.Current)
+			return nil
+		}
+		for _, port := range change.Opened {
+			printChange(stdout, "OPENED", port)
+		}
+		for _, port := range change.Closed {
+			printChange(stdout, "CLOSED", port)
+		}
+		return nil
 	})
-
-	return ports
+	if err == nil || errors.Is(err, context.Canceled) {
+		return 0
+	}
+	return printRuntimeError(stderr, err)
 }
 
-func printPortTable(ports []PortInfo) {
-	common.Header("사용 중인 포트 목록")
-	fmt.Println()
-
-	// 헤더
-	fmt.Printf("%s%-7s %-6s %-8s %-18s %-7s %-7s %-12s %-10s%s\n",
-		common.Bold, "PORT", "PROTO", "PID", "COMMAND", "CPU%", "MEM%", "USER", "STATE", common.Reset)
-	fmt.Println(strings.Repeat("─", 85))
-
-	for _, p := range ports {
-		stateColor := getStateColor(p.State)
-		cpuColor := getCPUColor(p.CPU)
-		memColor := getMemColor(p.Mem)
-		fmt.Printf("%-7d %-6s %-8s %-18s %s%-7s%s %s%-7s%s %-12s %s%-10s%s\n",
-			p.Port, p.Protocol, p.PID, truncate(p.Command, 18),
-			cpuColor, p.CPU, common.Reset,
-			memColor, p.Mem, common.Reset,
-			p.User, stateColor, p.State, common.Reset)
-	}
-
-	fmt.Println()
-	common.Info("총 %d개 포트 사용 중", len(ports))
-}
-
-func getCPUColor(cpu string) string {
-	val, err := strconv.ParseFloat(cpu, 64)
-	if err != nil {
-		return ""
-	}
-	if val >= 50 {
-		return common.Red
-	} else if val >= 20 {
-		return common.Yellow
-	}
-	return ""
-}
-
-func getMemColor(mem string) string {
-	val, err := strconv.ParseFloat(mem, 64)
-	if err != nil {
-		return ""
-	}
-	if val >= 10 {
-		return common.Red
-	} else if val >= 5 {
-		return common.Yellow
-	}
-	return ""
-}
-
-func getStateColor(state string) string {
-	switch state {
-	case "LISTEN":
-		return common.Green
-	case "ESTABLISHED":
-		return common.Cyan
-	case "CLOSE_WAIT", "TIME_WAIT":
-		return common.Yellow
+func printRuntimeError(stderr io.Writer, err error) int {
+	switch {
+	case errors.Is(err, ports.ErrToolNotFound):
+		fmt.Fprintln(stderr, "오류: lsof를 찾을 수 없습니다")
+	case errors.Is(err, ports.ErrPermission):
+		fmt.Fprintln(stderr, "오류: lsof 실행 권한이 없습니다")
 	default:
-		return ""
+		fmt.Fprintf(stderr, "오류: 포트 조회 실패: %v\n", err)
 	}
+	return 1
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-1] + "…"
+func printUsage(out io.Writer) {
+	fmt.Fprintln(out, "ls-port - 사용 중인 포트 목록 조회/감시")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "사용법: lsport [options]")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "옵션:")
+	fmt.Fprintln(out, "  --tcp          TCP 포트만 표시")
+	fmt.Fprintln(out, "  --udp          UDP 포트만 표시")
+	fmt.Fprintln(out, "  --listen       LISTEN 상태만 표시")
+	fmt.Fprintln(out, "  --port N       특정 포트만 표시 (1..65535)")
+	fmt.Fprintln(out, "  --watch        포트 opened/closed 변화 감시")
+	fmt.Fprintln(out, "  --interval D   감시 간격 (기본 2s)")
+	fmt.Fprintln(out, "  --count N      N개 스냅샷 후 종료")
+	fmt.Fprintln(out, "  -h, --help     도움말")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "비-TTY watch는 양수 --count가 필요합니다.")
 }
 
-// getProcessStats returns CPU%, MEM% for a given PID
-func getProcessStats(pid string) (cpu, mem string) {
-	cmd := exec.Command("ps", "-p", pid, "-o", "%cpu,%mem")
-	output, err := cmd.Output()
-	if err != nil {
-		return "-", "-"
+func printTable(out io.Writer, snapshot []ports.Port) {
+	fmt.Fprintf(out, "%-7s %-6s %-8s %-20s %-12s %-12s %s\n", "PORT", "PROTO", "PID", "COMMAND", "USER", "STATE", "NAME")
+	for _, port := range snapshot {
+		fmt.Fprintf(out, "%-7d %-6s %-8d %-20s %-12s %-12s %s\n", port.Port, port.Protocol, port.PID, truncate(port.Command, 20), truncate(port.User, 12), port.State, port.Name)
 	}
+	fmt.Fprintf(out, "총 %d개 포트 사용 중\n", len(snapshot))
+}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) < 2 {
-		return "-", "-"
-	}
+func printChange(out io.Writer, label string, port ports.Port) {
+	fmt.Fprintf(out, "%-6s %5d/%-3s pid=%d command=%q user=%q state=%q name=%q\n", label, port.Port, port.Protocol, port.PID, port.Command, port.User, port.State, port.Name)
+}
 
-	fields := strings.Fields(lines[1])
-	if len(fields) >= 2 {
-		return fields[0], fields[1]
+func truncate(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
 	}
-	return "-", "-"
+	return string(runes[:max-1]) + "…"
 }

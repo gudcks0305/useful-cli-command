@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/useful-go/internal/rootfs"
 	usefulfs "github.com/useful-go/pkg/fs"
 )
 
@@ -36,6 +37,7 @@ type CleanTarget struct {
 	Kind                  targetKind
 	RemoveRoot            bool
 	PrecomputedSize       int64
+	artifact              *artifactSnapshot
 }
 
 var defaultTargets = []CleanTarget{
@@ -96,6 +98,10 @@ func cleanTargets(results []AnalysisResult, workers int) []AnalysisResult {
 		result.Error = nil
 		if result.Target.Kind == kindDocker {
 			result.Error = cleanDocker()
+			return result
+		}
+		if result.Target.Kind == kindArtifact {
+			result.Error = removeApprovedArtifact(result.Target)
 			return result
 		}
 		for _, rawPath := range result.Target.Paths {
@@ -182,20 +188,21 @@ func removeContents(path string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("디렉터리가 아님")
 	}
-	entries, err := os.ReadDir(path)
+	root, err := os.OpenRoot(path)
 	if err != nil {
 		return err
 	}
-	var joined error
-	for _, entry := range entries {
-		if err := os.RemoveAll(filepath.Join(path, entry.Name())); err != nil {
-			joined = errors.Join(joined, err)
-		}
+	openedInfo, err := root.Lstat(".")
+	if err != nil {
+		return errors.Join(err, root.Close())
 	}
-	return joined
+	if !os.SameFile(info, openedInfo) {
+		return errors.Join(fmt.Errorf("디렉터리가 삭제 직전 변경됨"), root.Close())
+	}
+	return errors.Join(rootfs.RemoveContents(root), root.Close())
 }
 
-func removeRoot(path string) error {
+func removeRoot(path string) (retErr error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -206,7 +213,102 @@ func removeRoot(path string) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("symlink 대상 거부")
 	}
-	return os.RemoveAll(path)
+	parentPath, name := filepath.Dir(path), filepath.Base(path)
+	parent, err := os.OpenRoot(parentPath)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, parent.Close()) }()
+	current, err := parent.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if current.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, current) {
+		return fmt.Errorf("삭제 대상이 삭제 직전 변경됨")
+	}
+	if !current.IsDir() {
+		return parent.Remove(name)
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	return removeOpenedRoot(parent, name, root, current)
+}
+
+func removeApprovedArtifact(target CleanTarget) (retErr error) {
+	snapshot := target.artifact
+	if snapshot == nil || snapshot.scanRoot == nil || snapshot.scanRoot.root == nil {
+		return fmt.Errorf("artifact 승인 snapshot 없음")
+	}
+	if target.Name != snapshot.typeName || len(target.Paths) != 1 || target.Paths[0] != snapshot.path {
+		return fmt.Errorf("artifact type/path snapshot 불일치")
+	}
+	parent, err := snapshot.scanRoot.root.OpenRoot(snapshot.parentRel)
+	if err != nil {
+		return fmt.Errorf("artifact 승인 parent 재개방 실패: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, parent.Close()) }()
+	current, err := parent.Lstat(snapshot.name)
+	if err != nil {
+		return err
+	}
+	if current.Mode()&os.ModeSymlink != 0 || !current.IsDir() {
+		return fmt.Errorf("artifact symlink 또는 비-directory 거부")
+	}
+	if !os.SameFile(snapshot.info, current) {
+		return fmt.Errorf("artifact가 승인 후 교체됨")
+	}
+	marker, err := parent.Lstat(snapshot.markerName)
+	if err != nil || marker.Mode()&os.ModeSymlink != 0 || !marker.Mode().IsRegular() {
+		if err == nil {
+			err = fmt.Errorf("marker symlink 또는 비-regular 거부")
+		}
+		return fmt.Errorf("artifact marker 재검증 실패: %w", err)
+	}
+	if !sameFileSnapshot(snapshot.markerInfo, marker) {
+		return fmt.Errorf("artifact marker가 승인 후 교체됨")
+	}
+
+	root, err := parent.OpenRoot(snapshot.name)
+	if err != nil {
+		return err
+	}
+	openedInfo, err := root.Lstat(".")
+	if err != nil || !os.SameFile(snapshot.info, openedInfo) {
+		return errors.Join(fmt.Errorf("artifact가 삭제 직전 변경됨"), root.Close())
+	}
+	metadata, err := rootfs.Inspect(root)
+	if err != nil {
+		return errors.Join(err, root.Close())
+	}
+	if metadata.Latest.After(snapshot.lastModified) || metadata.Latest.After(snapshot.cutoff) {
+		return errors.Join(fmt.Errorf("artifact에 승인 후 또는 age cutoff 이후 활동 있음"), root.Close())
+	}
+	return removeOpenedRoot(parent, snapshot.name, root, snapshot.info)
+}
+
+func sameFileSnapshot(want, got os.FileInfo) bool {
+	return os.SameFile(want, got) &&
+		want.Mode() == got.Mode() &&
+		want.Size() == got.Size() &&
+		want.ModTime().Equal(got.ModTime())
+}
+
+func removeOpenedRoot(parent *os.Root, name string, root *os.Root, expected os.FileInfo) error {
+	removeErr := rootfs.RemoveContents(root)
+	closeErr := root.Close()
+	if err := errors.Join(removeErr, closeErr); err != nil {
+		return err
+	}
+	current, err := parent.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(expected, current) {
+		return fmt.Errorf("삭제 대상 root가 재귀 삭제 중 교체됨")
+	}
+	return parent.Remove(name)
 }
 
 type dockerDFRow struct {
@@ -214,13 +316,31 @@ type dockerDFRow struct {
 	Reclaimable string `json:"Reclaimable"`
 }
 
+type dockerUnavailableError struct {
+	err error
+}
+
+func (err *dockerUnavailableError) Error() string {
+	return fmt.Sprintf("docker 실행 파일을 찾을 수 없음: %v", err.err)
+}
+
+func (err *dockerUnavailableError) Unwrap() error { return err.err }
+
 func getDockerSize() (int64, error) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		return 0, nil
+	return getDockerSizeWith(exec.LookPath, runDockerSystemDF)
+}
+
+func getDockerSizeWith(
+	lookPath func(string) (string, error),
+	systemDF func(context.Context, string) ([]byte, error),
+) (int64, error) {
+	dockerPath, err := lookPath("docker")
+	if err != nil {
+		return 0, &dockerUnavailableError{err: err}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "docker", "system", "df", "--format", "{{json .}}").Output()
+	output, err := systemDF(ctx, dockerPath)
 	if ctx.Err() != nil {
 		return 0, fmt.Errorf("docker 응답 시간 초과")
 	}
@@ -228,6 +348,10 @@ func getDockerSize() (int64, error) {
 		return 0, err
 	}
 	return parseDockerDF(output)
+}
+
+func runDockerSystemDF(ctx context.Context, dockerPath string) ([]byte, error) {
+	return exec.CommandContext(ctx, dockerPath, "system", "df", "--format", "{{json .}}").Output()
 }
 
 func parseDockerDF(output []byte) (int64, error) {
@@ -288,8 +412,16 @@ func artifactTargets(artifacts []ProjectArtifact) []CleanTarget {
 	targets := make([]CleanTarget, 0, len(artifacts))
 	sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].Path < artifacts[j].Path })
 	for i, artifact := range artifacts {
-		targets = append(targets, CleanTarget{ID: fmt.Sprintf("project-%d", i+1), Name: artifact.Type, Description: artifact.Path, Paths: []string{artifact.Path}, Risk: riskExplicit, Kind: kindArtifact, RemoveRoot: true})
+		targets = append(targets, CleanTarget{ID: fmt.Sprintf("project-%d", i+1), Name: artifact.Type, Description: artifact.Path, Paths: []string{artifact.Path}, Risk: riskExplicit, Kind: kindArtifact, RemoveRoot: true, artifact: artifact.snapshot})
 		targets[len(targets)-1].PrecomputedSize = artifact.Size
 	}
 	return targets
+}
+
+func closeArtifactRoots(targets []CleanTarget) {
+	for _, target := range targets {
+		if target.artifact != nil {
+			target.artifact.scanRoot.close()
+		}
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"sort"
@@ -50,12 +51,17 @@ func main() {
 		}
 		targets = append(targets, artifactTargets(artifacts)...)
 	}
+	defer closeArtifactRoots(targets)
 
 	workers := normalizedWorkers(opts.workers, len(targets))
 	common.Info("병렬 작업자: %d", workers)
 	fmt.Println()
 	results := analyzeTargets(targets, workers)
 	printAnalysis(results)
+	if failed := analysisErrorCount(results); failed > 0 {
+		common.Error("분석 실패 %d개: 안전을 위해 삭제하지 않습니다", failed)
+		os.Exit(1)
+	}
 	available := nonEmptyResults(results)
 	if len(available) == 0 {
 		common.Success("정리할 데이터가 없습니다")
@@ -79,8 +85,12 @@ func main() {
 		printAnalysis(available)
 	}
 	if !opts.yes {
-		confirm := ui.YesNoConfirmation("선택 항목을 삭제하시겠습니까?")
-		if !confirm.MustConfirm() {
+		confirmed, err := confirmDeletion(os.Stdin, os.Stdout)
+		if err != nil {
+			common.Error("확인 입력 실패: %v", err)
+			os.Exit(1)
+		}
+		if !confirmed {
 			return
 		}
 	}
@@ -103,6 +113,21 @@ func main() {
 	if failed > 0 {
 		os.Exit(1)
 	}
+}
+
+func analysisErrorCount(results []AnalysisResult) int {
+	var count int
+	for _, result := range results {
+		if result.Error != nil {
+			count++
+		}
+	}
+	return count
+}
+
+func confirmDeletion(input io.Reader, output io.Writer) (bool, error) {
+	confirm := ui.YesNoConfirmation("선택 항목을 삭제하시겠습니까?")
+	return confirm.MustConfirmFromE(input, output)
 }
 
 func parseFlags() options {
